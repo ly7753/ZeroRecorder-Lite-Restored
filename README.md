@@ -118,3 +118,7 @@ Main tags:
 - This project uses hidden/private Android APIs.
 - It may break across Android releases or OEM ROM updates.
 - It is best treated as a shell-side engineering tool, not a production consumer app.
+
+## License
+
+This repository is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE).
