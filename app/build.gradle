@@ -1,0 +1,21 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.zero.recorder'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.zero.recorder'
+        minSdk 26
+        targetSdk 34
+    }
+    // ������Դ�ļ��д�������ٱ���
+    sourceSets {
+        main {
+            res.srcDirs = []
+            assets.srcDirs = []
+        }
+    }
+}
+dependencies {
+    // ��������ֱ�ӵ���ϵͳ API
+}
