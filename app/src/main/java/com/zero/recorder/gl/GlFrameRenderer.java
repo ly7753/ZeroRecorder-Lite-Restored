@@ -156,7 +156,7 @@ public final class GlFrameRenderer implements SurfaceTexture.OnFrameAvailableLis
         }
     }
 
-    public boolean awaitAndDraw(float rotationDegrees, int targetFps) {
+    public boolean awaitAndDraw(float rotationDegrees, int targetFps, long presentationTimeNs) {
         long waitTimeoutMs = 1000L / Math.max(targetFps, 1);
         boolean hasNewFrame = false;
 
@@ -232,7 +232,7 @@ public final class GlFrameRenderer implements SurfaceTexture.OnFrameAvailableLis
         GLES20.glVertexAttribPointer(textureHandle, 2, GLES20.GL_FLOAT, false, 8, textureBuffer);
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-        EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, System.nanoTime());
+        EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, presentationTimeNs);
         EGL14.eglSwapBuffers(eglDisplay, eglSurface);
         return hasNewFrame;
     }

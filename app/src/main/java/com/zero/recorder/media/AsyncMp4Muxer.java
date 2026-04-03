@@ -16,7 +16,7 @@ public final class AsyncMp4Muxer {
     private static final int BUFFER_PADDING = 10 * 1024;
 
     private final MediaMuxer mediaMuxer;
-    private final LinkedBlockingQueue<EncodedFrame> frameQueue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
+    private final LinkedBlockingQueue<EncodedFrame> pendingQueue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final LinkedBlockingQueue<ByteBuffer> bufferPool = new LinkedBlockingQueue<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean muxerStarted = new AtomicBoolean(false);
@@ -46,13 +46,23 @@ public final class AsyncMp4Muxer {
 
         workerThread = new Thread(() -> {
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-            while (running.get() || !frameQueue.isEmpty()) {
+            while (running.get() || !pendingQueue.isEmpty()) {
                 try {
-                    EncodedFrame frame = frameQueue.poll(50, TimeUnit.MILLISECONDS);
+                    if (!muxerStarted.get()) {
+                        if (!running.get()) {
+                            // If we stopped but muxer never started, something is wrong.
+                            // Break to avoid infinite loop.
+                            break;
+                        }
+                        Thread.sleep(50);
+                        continue;
+                    }
+
+                    EncodedFrame frame = pendingQueue.poll(50, TimeUnit.MILLISECONDS);
                     if (frame == null) {
                         continue;
                     }
-                    if (frame.info.size > 0 && muxerStarted.get()) {
+                    if (frame.info.size > 0) {
                         mediaMuxer.writeSampleData(frame.trackIndex, frame.buffer, frame.info);
                     }
                     frame.buffer.clear();
@@ -68,7 +78,7 @@ public final class AsyncMp4Muxer {
     }
 
     public void writeSampleData(int trackIndex, ByteBuffer codecBuffer, MediaCodec.BufferInfo info) {
-        if (!muxerStarted.get() || codecBuffer == null || info == null || info.size <= 0 || trackIndex < 0) {
+        if (codecBuffer == null || info == null || info.size <= 0 || trackIndex < 0) {
             return;
         }
 
@@ -86,11 +96,19 @@ public final class AsyncMp4Muxer {
 
         MediaCodec.BufferInfo copiedInfo = new MediaCodec.BufferInfo();
         copiedInfo.set(0, info.size, info.presentationTimeUs, info.flags);
-        frameQueue.offer(new EncodedFrame(trackIndex, copyBuffer, copiedInfo));
+        pendingQueue.offer(new EncodedFrame(trackIndex, copyBuffer, copiedInfo));
     }
 
     public void stopAndRelease() {
         running.set(false);
+        // Force start muxer if it hasn't started yet after recording is over
+        if (!muxerStarted.get() && trackCount.get() > 0) {
+            try {
+                mediaMuxer.start();
+                muxerStarted.set(true);
+            } catch (Exception ignored) {}
+        }
+        
         if (workerThread != null) {
             try {
                 workerThread.join(5000);
@@ -111,7 +129,7 @@ public final class AsyncMp4Muxer {
             }
         }
 
-        frameQueue.clear();
+        pendingQueue.clear();
         bufferPool.clear();
     }
 

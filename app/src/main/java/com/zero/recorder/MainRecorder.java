@@ -38,9 +38,10 @@ public class MainRecorder {
     private static final int AUDIO_BITRATE_BPS = 192_000;
     private static final int AUDIO_MAX_INPUT_SIZE = 16_384;
     private static final int AUDIO_BUFFER_SIZE = 4_096;
-    private static final int VIDEO_BITRATE_BPS = 15_000_000;
+    private static final int VIDEO_BITRATE_BPS = 8_000_000;
 
     private static volatile long globalBaseTimeUs = -1L;
+    private static volatile long globalStartNs = -1L;
 
     public static void main(String[] args) {
         if (Looper.getMainLooper() == null) {
@@ -60,6 +61,7 @@ public class MainRecorder {
 
         logContext(shellContext);
         globalBaseTimeUs = -1L;
+        globalStartNs = System.nanoTime();
 
         int initialRotation = displayController.getRotation();
         new Thread(() -> runRecording(shellContext, displayController, initialRotation), "RecorderMainThread").start();
@@ -88,6 +90,10 @@ public class MainRecorder {
                         + " @" + candidate.fps + "fps");
             }
 
+            // Important: Reset base times for each attempt to ensure PTS starts at 0
+            globalBaseTimeUs = -1L;
+            globalStartNs = System.nanoTime();
+
             RecordingAttemptResult result =
                     attemptRecording(shellContext, displayController, initialRotation, outputPath, candidate);
             if (result.success) {
@@ -98,7 +104,6 @@ public class MainRecorder {
 
             lastFailure = result.failure;
             cleanupFailedOutput(outputPath);
-            globalBaseTimeUs = -1L;
         }
 
         if (lastFailure != null) {
@@ -223,6 +228,8 @@ public class MainRecorder {
         long firstEncodedSampleDeadline = System.currentTimeMillis() + FIRST_FRAME_TIMEOUT_MS;
         boolean firstVideoSampleWritten = false;
 
+        long frameDurationNs = 1_000_000_000L / fps;
+
         while (System.currentTimeMillis() < stopTime) {
             if (displayController.consumePendingRebind()) {
                 renderer.updateSourceSize(displayController.getScreenWidth(), displayController.getScreenHeight());
@@ -233,7 +240,22 @@ public class MainRecorder {
             if (rotationFix < 0) {
                 rotationFix += 360f;
             }
-            boolean receivedNewFrame = renderer.awaitAndDraw(rotationFix, fps);
+
+            long currentPtsNs = System.nanoTime() - globalStartNs;
+            boolean receivedNewFrame = renderer.awaitAndDraw(rotationFix, fps, currentPtsNs);
+            
+            if (!receivedNewFrame && firstFrameRendered) {
+                // If we've already started but stopped receiving frames, try rebinding
+                if (System.currentTimeMillis() >= firstFrameDeadline) {
+                    RecorderLog.w(TAG, "Source frame delivery stalled, rebinding...");
+                    firstFrameDeadline = System.currentTimeMillis() + FIRST_FRAME_TIMEOUT_MS;
+                    renderer.updateSourceSize(displayController.getScreenWidth(), displayController.getScreenHeight());
+                    displayController.bindCaptureSurface(shellContext, renderer.getInputSurface(), targetWidth, targetHeight);
+                }
+            } else if (receivedNewFrame) {
+                firstFrameDeadline = System.currentTimeMillis() + FIRST_FRAME_TIMEOUT_MS;
+            }
+
             if (!firstFrameRendered) {
                 if (receivedNewFrame) {
                     firstFrameRendered = true;
@@ -267,6 +289,10 @@ public class MainRecorder {
                             firstVideoSampleWritten = true;
                             RecorderLog.i(TAG, "First encoded video sample received");
                         }
+                        // For surface input, the encoder already has the PTS from eglPresentationTimeANDROID
+                        // converted to microseconds. We just need to make sure it's not subtracted twice.
+                        // Actually, normalizeTimeBase uses a static globalBaseTimeUs. 
+                        // To avoid confusion, let's make sure audio also uses the same relative time.
                         normalizeTimeBase(videoInfo);
                         ByteBuffer outputBuffer = videoCodec.getOutputBuffer(outputIndex);
                         if (outputBuffer != null) {
@@ -286,7 +312,7 @@ public class MainRecorder {
 
     private static List<VideoCandidate> buildVideoCandidates(DisplayCaptureController displayController, int fps) {
         String[] mimeTypes = {MediaFormat.MIMETYPE_VIDEO_HEVC, MediaFormat.MIMETYPE_VIDEO_AVC};
-        int[][] resolutionCaps = {{0, 0}, {1440, 0}, {1080, 0}, {1920, 1}};
+        int[][] resolutionCaps = {{0, 0}, {1440, 0}, {1080, 0}, {720, 0}, {1920, 1}};
         int[] fpsCaps = fps > 30 ? new int[]{fps, 30} : new int[]{fps};
         Set<String> seen = new LinkedHashSet<>();
         List<VideoCandidate> candidates = new ArrayList<>();
@@ -347,6 +373,9 @@ public class MainRecorder {
             while (recordingActive.get()) {
                 int bytesRead = record.read(audioBuffer, 0, audioBuffer.length);
                 if (bytesRead <= 0) {
+                    if (bytesRead < 0) {
+                        RecorderLog.w(TAG, "AudioRecord error: " + bytesRead);
+                    }
                     continue;
                 }
 
@@ -356,7 +385,8 @@ public class MainRecorder {
                     if (inputBuffer != null) {
                         inputBuffer.clear();
                         inputBuffer.put(audioBuffer, 0, bytesRead);
-                        codec.queueInputBuffer(inputIndex, 0, bytesRead, System.nanoTime() / 1000L, 0);
+                        long currentPtsUs = (System.nanoTime() - globalStartNs) / 1000L;
+                        codec.queueInputBuffer(inputIndex, 0, bytesRead, currentPtsUs, 0);
                     }
                 }
 
