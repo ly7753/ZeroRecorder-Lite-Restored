@@ -1,124 +1,134 @@
 # ZeroRecorder Lite Restored
 
-A headless Android screen recorder that is launched from `adb shell` via `app_process`, instead of a normal app UI.
+一个通过 `adb shell` + `app_process` 启动的无界面（headless）Android 录屏工具，不依赖普通 App 的 UI/Activity 流程。
 
-This project captures:
+ZeroRecorder Lite Restored is a headless Android screen recorder launched via `adb shell` + `app_process`, rather than a normal app UI/Activity flow.
 
-- Screen video through private display APIs and an OpenGL render path
-- Internal audio when the device/ROM allows it
-- MP4 output written to `/sdcard/Movies/ZeroRecorder`
+主要能力：
 
-## What It Is
+- 使用私有显示接口采集屏幕（优先 `SurfaceControl`，必要时回退到 `VirtualDisplay`）
+- 使用 OpenGL 渲染路径做旋转/缩放并喂给硬编码器
+- 尝试采集系统播放声音（ROM/权限允许时），并封装为 MP4
+- 输出到设备：`/sdcard/Movies/ZeroRecorder/`
 
-This is not a typical tap-to-launch Android app. The APK is pushed to the device, then a Java `main()` entrypoint is executed directly from the shell environment.
+Key features:
 
-That design makes it possible to use system-only APIs such as:
+- Capture screen frames via private display APIs (prefer `SurfaceControl`, fallback to `VirtualDisplay` when needed)
+- Use an OpenGL render path for rotation/scale and feed frames into the hardware encoder
+- Best-effort internal audio capture (when the ROM/privileges allow), muxed into MP4
+- Output directory on device: `/sdcard/Movies/ZeroRecorder/`
 
-- `SurfaceControl` / `DisplayControl`
-- hidden framework context workarounds
-- `AudioPolicy` / playback capture internals
+## 适用范围与风险 / Scope & Risks
 
-Because of this, compatibility depends heavily on Android version, vendor ROM behavior, and shell-level privileges.
+本项目使用隐藏/私有 Android API（反射 + 系统上下文绕过）。兼容性强依赖：
 
-## Current State
+- Android 版本（尤其 Android 13+ 的音频策略）
+- 厂商 ROM 行为（MIUI 等更严格，可能导致无声或帧投递不稳定）
+- shell 权限与系统服务限制
 
-The restored version currently includes:
+建议把它当作工程工具使用，而不是面向普通用户的“通用录屏 App”。
 
-- audio capture fallback strategies for Android 13+
-- playback-preserving audio capture when the ROM accepts shell attribution
-- runtime video fallback from H.265 to H.264
-- extra recorder-specific logs for frame delivery, display binding, and encoder startup
+This project uses hidden/private Android APIs (reflection + system context workarounds). Compatibility heavily depends on:
 
-Known reality:
+- Android version (especially audio policy changes on Android 13+)
+- Vendor ROM behavior (MIUI and others may be stricter, causing no-audio or unstable frame delivery)
+- Shell-level privileges and system service restrictions
 
-- some devices fail on H.265 and need fallback to H.264
-- some ROMs are stricter about audio attribution than stock Android
-- occasional display/frame delivery issues may still require device-specific tuning
+Treat it as an engineering tool rather than a production-ready consumer recorder.
 
-## Project Layout
+## 目录结构 / Project Layout
 
-- `app/src/main/java/com/zero/recorder/MainRecorder.java`
-  Main orchestration entrypoint
-- `app/src/main/java/com/zero/recorder/audio/`
-  Audio capture strategies
-- `app/src/main/java/com/zero/recorder/capture/`
-  Display binding and rebind logic
-- `app/src/main/java/com/zero/recorder/gl/`
-  OpenGL frame rendering path
-- `app/src/main/java/com/zero/recorder/media/`
-  Video encoder and MP4 muxing
-- `app/src/main/java/com/zero/recorder/system/`
-  Shell/system context workarounds
+- `app/src/main/java/com/zero/recorder/MainRecorder.java`：主入口与录制编排
+- `app/src/main/java/com/zero/recorder/audio/`：音频采集策略（Playback/RemoteSubmix/Policy 等回退）
+- `app/src/main/java/com/zero/recorder/capture/`：显示采集绑定与重绑定逻辑
+- `app/src/main/java/com/zero/recorder/gl/`：OpenGL 渲染与帧同步
+- `app/src/main/java/com/zero/recorder/media/`：编码与 MP4 封装
+- `app/src/main/java/com/zero/recorder/system/`：Shell/System Context 与隐藏 API 绕过
 
-## Requirements
+## 环境要求 / Requirements
 
-- Windows host
-- Android SDK with `adb`
-- Android Studio JBR or another compatible JDK
-- A device that allows the shell process to access the required display/audio paths
+- Windows（自带 `build.ps1` / `run.ps1`）
+- Android SDK（包含 `adb`）
+- Android Studio JBR 或兼容 JDK
+- 一台允许 shell 访问相关显示/音频路径的设备
 
-The included scripts currently assume local paths similar to the author's machine:
+脚本默认路径可能与你的机器不同，需要按实际环境调整：
 
-- Android SDK: `C:\Users\ly775\AppData\Local\Android\Sdk`
-- JBR: `D:\Program Files\Android\Android Studio\jbr`
+- Android SDK（示例）：`C:\Users\ly775\AppData\Local\Android\Sdk`
+- JBR（示例）：`D:\Program Files\Android\Android Studio\jbr`
 
-Update `build.ps1` and `run.ps1` if your environment differs.
+You may need to adjust `build.ps1` and `run.ps1` to match your local SDK/JDK paths.
 
-## Build
+## 构建 / Build
 
 ```powershell
 .\build.ps1
 ```
 
-Or directly:
+或直接：
 
 ```powershell
 .\gradlew.bat assembleDebug
 ```
 
-## Run
+## 运行 / Run
 
 ```powershell
 .\run.ps1
 ```
 
-The runner will:
+执行流程：
 
-1. locate the Java `main()` entrypoint
-2. push the debug APK to the device
-3. execute it with `app_process`
-4. save logs under `.\logs`
+1. 推送 debug APK 到设备
+2. 在设备端通过 `app_process` 执行 Java `main()`
+3. 保存运行日志到 `.\logs`
 
-## Output
+What the runner does:
 
-Recorded files are written on-device to:
+1. Push the debug APK to the device
+2. Execute the Java `main()` entrypoint via `app_process`
+3. Save logs to `.\logs`
+
+## 输出文件 / Output
+
+录制文件写入设备：
 
 ```text
 /sdcard/Movies/ZeroRecorder/Rec_YYYYMMDD_HHMMSS.mp4
 ```
 
-## Logs
+## 日志与排障 / Logs & Troubleshooting
 
-`run.ps1` writes:
+`run.ps1` 会生成：
 
-- `logs/console_output_*.txt`
-- `logs/logcat_*.txt`
-- `logs/logcat_zero_recorder_*.txt`
+- `logs/console_output_*.txt`：标准输出/错误输出（建议优先看）
+- `logs/logcat_*.txt`：完整 logcat
+- `logs/logcat_zero_recorder_*.txt`：过滤后的 recorder 日志
 
-The filtered logcat file is the best starting point for debugging recorder behavior.
-
-Main tags:
+关键日志 tag：
 
 - `ZR.Main`
 - `ZR.Display`
 - `ZR.GL`
 
-## Notes
+常见问题定位：
 
-- This project uses hidden/private Android APIs.
-- It may break across Android releases or OEM ROM updates.
-- It is best treated as a shell-side engineering tool, not a production consumer app.
+- H.265 失败：会自动回退 H.264；若仍失败，多半是分辨率/码率不被硬编码器支持
+- 视频只有一帧/卡住：通常是 ROM 停止投递画面或封装器等待轨道导致写入异常
+- 无声：多半是 ROM 不允许 shell attribution 的 playback capture，或者音频源被策略拒绝
 
-## License
+Artifacts generated by `run.ps1`:
 
-This repository is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE).
+- `logs/console_output_*.txt`: stdout/stderr (best first stop)
+- `logs/logcat_*.txt`: full logcat
+- `logs/logcat_zero_recorder_*.txt`: filtered recorder logs
+
+Common issues:
+
+- H.265 fails: falls back to H.264; if it still fails, the device encoder likely rejects the chosen resolution/bitrate
+- Only one frame / frozen video: usually ROM stops delivering frames, or muxing/track readiness issues
+- No audio: ROM rejects playback capture for shell attribution, or audio policy denies the source
+
+## License / 许可证
+
+Apache License 2.0，见 [`LICENSE`](LICENSE)。
