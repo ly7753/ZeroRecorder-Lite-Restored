@@ -1,8 +1,8 @@
-# ZeroRecorder Lite Restored
+# ZeroRecorder
 
 一个通过 `adb shell` + `app_process` 启动的无界面（headless）Android 录屏工具，不依赖普通 App 的 UI/Activity 流程。
 
-ZeroRecorder Lite Restored is a headless Android screen recorder launched via `adb shell` + `app_process`, rather than a normal app UI/Activity flow.
+ZeroRecorder is a headless Android screen recorder launched via `adb shell` + `app_process`, rather than a normal app UI/Activity flow.
 
 主要能力：
 
